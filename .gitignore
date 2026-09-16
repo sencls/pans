@@ -1,0 +1,9 @@
+build/
+bin/
+.vscode/
+
+*.o
+*.a
+*.so
+*.out
+CMakeCache.txt
