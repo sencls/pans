@@ -14,7 +14,7 @@ auto Qvalue(const int &total)
     auto ration = [](auto &total, auto &sum, auto &x) -> double
     { return total * (x / (sum)); };
     double sum;
-    std::vector<double> nums{192, 223, 421, 70, 209, 211, 969, 316, 175, 629}; // 209, 211, 969, 316, 175, 629};
+    std::vector<double> nums{192, 223, 421, 100, 209, 211, 969, 316, 175, 629}; //, 209, 211, 969, 316, 175, 629};
     std::vector<double> rations;
     // std::cin >> total;
     sum = std::accumulate(nums.begin(), nums.end(), 0);
@@ -65,7 +65,7 @@ auto Qvalue(const int &total)
 
 int main()
 {
-    for (int i = 20; i <= 3415; ++i)
+    for (int i = 1662; i <= 3445; ++i)
     {
         std::cout << "总席位为：" << i << std::endl;
         if (!Qvalue(i))
@@ -75,3 +75,4 @@ int main()
 }
 
 // 32 //423 //553
+// 32 //558 //1447 //1611 //1725

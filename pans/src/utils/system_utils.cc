@@ -142,7 +142,7 @@ namespace pans
             }
         };
 
-        const Dwfl_Callbacks Dwfl_Callbacks{
+        const Dwfl_Callbacks DWFL_CALLBACKS{
             dwfl_linux_proc_find_elf, dwfl_standard_find_debuginfo, nullptr, nullptr};
 
         class SourceLocationParser final
@@ -213,7 +213,10 @@ namespace pans
 #endif
     }
 
-    std::string GetBacktrace(int size = 20, int skip = 1, const std::string &prefix = "")
+    std::string GetBacktrace(int size, int skip, const std::string &prefix)
     {
+        // todo
+        std::cout << size << skip << prefix;
+        return {};
     }
 }
