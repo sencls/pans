@@ -7,6 +7,7 @@ target_compile_options(pans_options INTERFACE
         -Wextra           # 额外警告（比 -Wall 更严格）
         -Wpedantic        # 严格遵循标准
         -fno-strict-aliasing
+        -Wno-builtin-macro-redefined # 消除__FILE__重定义告警
     >
 )
 
@@ -44,6 +45,7 @@ target_compile_options(pans_options INTERFACE
     $<$<CONFIG:RelWithDebInfo>:-fno-omit-frame-pointer>
 )
 
+# ===== 覆盖率选项（默认关闭） =====
 option(ENABLE_COVERAGE "Enable code coverage instrumentation" OFF)
 if(ENABLE_COVERAGE)
     target_compile_options(pans_options INTERFACE
@@ -53,3 +55,5 @@ if(ENABLE_COVERAGE)
         $<$<CONFIG:Debug>:--coverage>
     )
 endif()
+
+
