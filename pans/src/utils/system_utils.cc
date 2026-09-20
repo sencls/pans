@@ -215,8 +215,53 @@ namespace pans
 
     std::string GetBacktrace(int size, int skip, const std::string &prefix)
     {
-        // todo
-        std::cout << size << skip << prefix;
-        return {};
+        if (size < 0)
+        {
+            return {};
+        }
+#if defined(_WIN32)
+        const int capture_size = std::min(size, static_cast<int>(std::numberic_limits<USHORT>::max()));
+        std::vector<void *> frames(static_cast<std::size_t>(capture_size));
+        const int frame_count = static_cast<int>(CaptureStackBackTrace(0, static_cast<DWORD>(frames.size()), frames.data(), nullptr));
+        if (frame_count <= 0)
+        {
+            return {};
+        }
+        std::ostringstream stream;
+        const int first_frame = std::clamp(skip, 0, frame_count);
+        std::lock_guard<std::mutex> lock(GetDbgHelpMutex());
+        const DbgHelpContext &context = GetDbgHelpContext();
+        for (int i = first_frame; i < frame_count; ++i)
+        {
+            stream << prefix << "#" << i - first_frame << " ";
+            WriteWindowsFrame(stream, context, frames[i], i > 0);
+            stream << "\n";
+        }
+        return stream.str();
+#else
+        std::vector<void *> frames(static_cast<std::size_t>(size));
+        const int frame_count = ::backtrace(frames.data(), size);
+        if (frame_count <= 0)
+            return {};
+        std::unique_ptr<char *, FreeDeleter> symbols(::backtrace_symbols(frames.data(), frame_count));
+        if (!symbols)
+        {
+            return {};
+        }
+        std::ostringstream stream;
+        const SourceLocationParser source_location_parser;
+        const int first_frame = std::clamp(skip, 0, frame_count);
+        for (int i = first_frame; i < frame_count; ++i)
+        {
+            stream << prefix << "#" << i - first_frame << " " << DemangleBacktraceSymbol(symbols.get()[i]);
+            const std::string source_location = source_location_parser.parse(frames[i], i > 0);
+            if (!source_location.empty())
+            {
+                stream << " at " << source_location;
+            }
+            stream << '\n';
+        }
+        return stream.str();
+#endif
     }
 }
