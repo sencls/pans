@@ -11,6 +11,11 @@
 
 int main()
 {
-    std::cout << "c++20";
+    std::string s = "Scut2024";
+    for (auto &t : s)
+    {
+        t = static_cast<ushort>(t) ^ static_cast<ushort>(s.size());
+    }
+    std::cout << s;
     return 0;
 }
