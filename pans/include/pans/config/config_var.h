@@ -123,7 +123,7 @@ namespace pans
 
         [[nodiscard]] std::string_view getTypeName() const noexcept override { return TypeName<T>(); }
 
-        ListenerId addLitener(OnChange callback)
+        ListenerId addListener(OnChange callback)
         {
             if (!callback)
             {
@@ -133,7 +133,7 @@ namespace pans
             auto shared_callback = std::make_shared<const OnChange>(std::move(callback));
             {
                 std::lock_guard<std::mutex> lock(m_listenersMutex);
-                m_listeners.emplac_back(id, std::move(shared_callback));
+                m_listeners.emplace_back(id, std::move(shared_callback));
             }
             return id;
         }

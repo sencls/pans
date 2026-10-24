@@ -7,8 +7,10 @@
 
 namespace pans::detail
 {
+
     namespace
     {
+
         [[nodiscard]] constexpr char ToLowerAscii(char ch) noexcept
         {
             return (ch >= 'A' && ch <= 'Z') ? static_cast<char>(ch - 'A' + 'a') : ch;
@@ -17,7 +19,7 @@ namespace pans::detail
         constexpr std::array<std::string_view, 6> TRUE_WORDS{"true", "yes", "on", "y", "1", "t"};
         constexpr std::array<std::string_view, 6> FALSE_WORDS{"false", "no", "off", "n", "0", "f"};
 
-        [[nodiscard]] bool EqualIgnoreCase(std::string_view lhs, std::string_view rhs) noexcept
+        [[nodiscard]] bool EqualsIgnoreCase(std::string_view lhs, std::string_view rhs) noexcept
         {
             if (lhs.size() != rhs.size())
             {
@@ -33,13 +35,14 @@ namespace pans::detail
             return true;
         }
 
-    }
+    } // namespace
+
     bool ParseBool(std::string_view text, bool &out) noexcept
     {
         const std::string_view body = StringUtils::Trim(text);
         for (const std::string_view word : TRUE_WORDS)
         {
-            if (EqualIgnoreCase(body, word))
+            if (EqualsIgnoreCase(body, word))
             {
                 out = true;
                 return true;
@@ -48,7 +51,7 @@ namespace pans::detail
 
         for (const std::string_view word : FALSE_WORDS)
         {
-            if (EqualIgnoreCase(body, word))
+            if (EqualsIgnoreCase(body, word))
             {
                 out = false;
                 return true;
@@ -65,9 +68,9 @@ namespace pans::detail
         }
         if (!node.IsScalar())
         {
-            ThrowConvertError(type_name, "期望YAML 标量节点");
+            ThrowConvertError(type_name, "期望 YAML 标量节点");
         }
         return node.Scalar();
     }
 
-}
+} // namespace pans::detail

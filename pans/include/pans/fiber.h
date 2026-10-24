@@ -36,10 +36,11 @@ namespace pans
             IO,
             Timer,
             Semaphore,
-            External
+            External,
         };
 
         static constexpr std::size_t DEFAULT_STACK_SIZE = 128U * 1024U;
+
         struct Options
         {
             std::size_t stackSize = DEFAULT_STACK_SIZE;
@@ -58,15 +59,16 @@ namespace pans
         State resume();
 
         void reset(Callback callback);
+
         [[nodiscard]] bool wake() noexcept;
         [[nodiscard]] u64 getId() const noexcept;
         [[nodiscard]] State getState() const noexcept;
         [[nodiscard]] WaitReason getWaitReason() const noexcept;
         [[nodiscard]] std::size_t getStackSize() const noexcept;
         [[nodiscard]] bool hasGuardPage() const noexcept;
-        [[nodiscard]] std::exception_ptr getEeception() const noexcept;
+        [[nodiscard]] std::exception_ptr getException() const noexcept;
 
-        void rethrowFailed() const;
+        void rethrowIfFailed() const;
 
         [[nodiscard]] static Fiber *Current() noexcept;
         [[nodiscard]] static ptr GetThis();
@@ -74,7 +76,7 @@ namespace pans
         [[nodiscard]] static u64 TotalFibers() noexcept;
 
         static void YieldToReady();
-        static void YieldToHeld(WaitReason reason = WaitReason::External);
+        static void YieldToHold(WaitReason reason = WaitReason::External);
 
         [[nodiscard]] static std::string_view StateName(State state) noexcept;
         [[nodiscard]] static std::string_view WaitReasonName(WaitReason reason) noexcept;
@@ -89,6 +91,6 @@ namespace pans
         std::unique_ptr<Impl> m_impl;
     };
 
-}
+} // namespace pans
 
-#endif
+#endif // PANS_INCLUDE_PANS_FIBER_H

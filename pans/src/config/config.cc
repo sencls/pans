@@ -3,20 +3,26 @@
 #include <mutex>
 #include <shared_mutex>
 #include <stdexcept>
+#include <string>
+#include <string_view>
+#include <unordered_map>
+#include <utility>
 #include <vector>
 
+#include <pans/config/config.h>
 #include <pans/utils/fs_utils.h>
 #include <pans/macros.h>
-#include <pans/config/config.h>
 
 namespace pans
 {
+
     namespace
     {
+
         using ConfigVarMap = Config::ConfigVarMap;
         using FileWriteTimestampMap = std::unordered_map<std::string, std::filesystem::file_time_type>;
 
-        ConfigVarMap &GetDatas() // 惰性初始化
+        ConfigVarMap &GetDatas()
         {
             static ConfigVarMap s_datas;
             return s_datas;
@@ -27,6 +33,7 @@ namespace pans
             static std::shared_mutex s_mutex;
             return s_mutex;
         }
+
         FileWriteTimestampMap &GetLoadedFileWriteTimestamps()
         {
             static FileWriteTimestampMap s_write_timestamps;
@@ -65,10 +72,12 @@ namespace pans
             {
                 output.emplace_back(prefix, node);
             }
+
             if (!node.IsMap())
             {
                 return;
             }
+
             for (const auto &entry : node)
             {
                 if (!entry.first.IsScalar())
@@ -76,6 +85,7 @@ namespace pans
                     detail::ReportConfigError("Config::LoadFromYaml", prefix, {}, "映射的键必须是标量，已跳过");
                     ASSERT_CONTINUE(false);
                 }
+
                 std::string key = detail::NormalizeConfigName(entry.first.Scalar());
                 if (!detail::IsValidConfigName(key))
                 {
@@ -90,30 +100,35 @@ namespace pans
                 CollectMembers(key, entry.second, output);
             }
         }
-    }
+
+    } // namespace
 
     ConfigVarBase::ptr Config::LookupBase(std::string_view name)
     {
         return LookupFromMap(NormalizeName(name));
     }
+
     bool Config::IsValidName(std::string_view name) noexcept
     {
         return detail::IsValidConfigName(name);
     }
+
     std::string Config::NormalizeName(std::string_view name)
     {
         return detail::NormalizeConfigName(std::string(name));
     }
+
     std::size_t Config::Size()
     {
         std::shared_lock<std::shared_mutex> lock(GetMutex());
         return GetDatas().size();
     }
+
     ConfigVarBase::ptr Config::CheckType(ConfigVarBase::ptr var, std::string_view type_name)
     {
         if (var->getTypeName() != type_name)
         {
-            detail::ReportConfigError("Config::Lookup", var->getName(), type_name, std::string("已被注册为其他类型").append(var->getTypeName()));
+            detail::ReportConfigError("Config::Lookup", var->getName(), type_name, std::string("已注册为其它类型: ").append(var->getTypeName()));
             ASSERT_RETVAL(false, nullptr);
         }
         return var;
@@ -124,10 +139,9 @@ namespace pans
         std::string normalized = NormalizeName(name);
         if (!IsValidName(normalized))
         {
-            detail::ReportConfigError("Config::Lookup", normalized, type_name, "配置包含非法字符");
+            detail::ReportConfigError("Config::Lookup", normalized, type_name, "配置名包含非法字符");
             throw std::invalid_argument("pans: invalid config name: " + normalized);
         }
-
         if (ConfigVarBase::ptr old_val = LookupFromMap(normalized))
         {
             return CheckType(std::move(old_val), type_name);
@@ -153,6 +167,7 @@ namespace pans
         {
             return;
         }
+
         std::vector<std::pair<std::string, YAML::Node>> nodes;
         CollectMembers({}, root, nodes);
 
@@ -164,6 +179,7 @@ namespace pans
             }
         }
     }
+
     void Config::LoadFromConfDir(std::string_view path, bool force)
     {
         if (path.empty())
@@ -171,6 +187,7 @@ namespace pans
             detail::ReportConfigError("Config::LoadFromConfDir", {}, {}, "配置目录不能为空");
             return;
         }
+
         std::vector<std::string> files;
         try
         {
@@ -180,15 +197,14 @@ namespace pans
                 detail::ReportConfigError("Config::LoadFromConfDir", directory.string(), {}, "配置目录不存在或不是目录");
                 return;
             }
-
             FSUtils::ListAllFile(files, directory.string(), ".yml");
             FSUtils::ListAllFile(files, directory.string(), ".yaml");
         }
         catch (const std::exception &e)
         {
             detail::ReportConfigError("Config::LoadFromConfDir", path, {}, e.what());
+            return;
         }
-
         for (const std::string &file_name : files)
         {
             try
@@ -228,7 +244,6 @@ namespace pans
                 snapshot.push_back(var);
             }
         }
-
         for (const ConfigVarBase::ptr &var : snapshot)
         {
             callback(var);
@@ -253,4 +268,4 @@ namespace pans
         }
     }
 
-}
+} // namespace pans

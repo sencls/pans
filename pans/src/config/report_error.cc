@@ -8,8 +8,10 @@
 
 namespace pans::detail
 {
+
     namespace
     {
+
         LoggerPtr ConfigLogger()
         {
             static LoggerPtr logger = GetLogger("system");
@@ -17,14 +19,16 @@ namespace pans::detail
         }
 
     } // namespace
+
     void ReportConfigError(std::string_view operation, std::string_view name, std::string_view type_name, std::string_view reason)
     {
         auto logger = ConfigLogger();
         PANS_LOG_ERROR(logger) << operation << " failed:"
                                << " name=" << (name.empty() ? std::string_view("<none>") : name)
                                << " type=" << (type_name.empty() ? std::string_view("<none>") : type_name)
-                               << " reason=" << (reason.empty() ? std::string_view("<none>") : reason);
+                               << " reason=" << reason;
     }
+
     void ThrowConvertError(std::string_view type_name, std::string_view reason, std::string_view value)
     {
         std::string message;
@@ -37,4 +41,4 @@ namespace pans::detail
         throw std::runtime_error(message);
     }
 
-}
+} // namespace pans::detail

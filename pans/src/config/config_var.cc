@@ -2,16 +2,21 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+
 #include <pans/config/config_var.h>
 
 namespace pans
 {
+
     namespace detail
     {
+
         namespace
         {
+
             constexpr std::string_view CONFIG_NAME_CHARSET = "abcdefghijklmnopqrstuvwxyz._0123456789";
-        }
+
+        } // namespace
 
         ListenerId NextListenerId() noexcept
         {
@@ -24,23 +29,27 @@ namespace pans
             for (char &ch : name)
             {
                 if (ch >= 'A' && ch <= 'Z')
+                {
                     ch = static_cast<char>(ch - 'A' + 'a');
+                }
             }
             return name;
         }
 
         bool IsValidConfigName(std::string_view name) noexcept
         {
-            return !name.empty() && name.find_first_not_of(CONFIG_NAME_CHARSET) == std::string::npos;
+            return !name.empty() && name.find_first_not_of(CONFIG_NAME_CHARSET) == std::string_view::npos;
         }
-    }
 
-    ConfigVarBase::ConfigVarBase(std::string name, std::string description) : m_name(detail::NormalizeConfigName(std::move(name))), m_description(std::move(description))
+    } // namespace detail
+
+    ConfigVarBase::ConfigVarBase(std::string name, std::string description)
+        : m_name(detail::NormalizeConfigName(std::move(name))), m_description(std::move(description))
     {
-        if (!detail::IsValidConfigName(name))
+        if (!detail::IsValidConfigName(m_name))
         {
-            detail::ReportConfigError("ConfigVarBase::ConfigVarBase", m_name, {}, "配置包含非法字符");
-            throw std::invalid_argument("pans: invalid config name: " + name);
+            detail::ReportConfigError("ConfigVarBase::ConfigVarBase", m_name, {}, "配置名包含非法字符");
+            throw std::invalid_argument("pans: invalid config name: " + m_name);
         }
     }
 
@@ -70,7 +79,7 @@ namespace pans
         }
         catch (...)
         {
-            detail::ReportConfigError("ConfigVarBase::toString", m_name, getTypeName(), "未知错误");
+            detail::ReportConfigError("ConfigVarBase::toString", m_name, getTypeName(), "未知异常");
         }
         return {};
     }
@@ -87,8 +96,9 @@ namespace pans
         }
         catch (...)
         {
-            detail::ReportConfigError("ConfigVarBase::fromString", m_name, getTypeName(), "未知错误");
+            detail::ReportConfigError("ConfigVarBase::fromString", m_name, getTypeName(), "未知异常");
         }
         return false;
     }
-}
+
+} // namespace pans
