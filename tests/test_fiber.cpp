@@ -95,7 +95,6 @@ namespace
             rethrown = std::string(exception.what()) == "fiber failure";
         }
         ASSERT_RETNONE2(rethrown, "original fiber exception was not rethrown");
-
         bool reset_flag = false;
         fiber->reset([&]()
                      { reset_flag = true; });
@@ -129,18 +128,122 @@ namespace
         ASSERT_RETNONE2(!fiber->hasGuardPage(), "guard-page option was not retained");
         fiber->resume();
         ASSERT_RETNONE2(fiber->getState() == pans::Fiber::State::TERM, "custom-stack fiber did not terminate");
-        ;
     }
 
-}
+    void TestFiber5()
+    {
+        std::vector<int> steps;
+        pans::Fiber::ptr outer = std::make_shared<pans::Fiber>([&]()
+                                                               {
+        steps.push_back(1);
+        auto inner = std::make_shared<pans::Fiber>([&]() {
+            steps.push_back(3);
+            pans::Fiber::YieldToReady();
+            steps.push_back(5);
+        });
+        pans::Fiber::YieldToReady();
+        inner->resume();
+        ASSERT_RETNONE2(pans::Fiber::Current() == outer.get(), "nested yield did not restore outer fiber");
+        steps.push_back(4);
+        inner->resume();
+        ASSERT_RETNONE2(inner->getState() == pans::Fiber::State::TERM, "nested fiber did not terminate");
+        steps.push_back(6); });
+
+        outer->resume();
+        steps.push_back(2);
+        outer->resume();
+        ASSERT_RETNONE2(outer->getState() == pans::Fiber::State::TERM, "outer fiber did not terminate");
+        ASSERT_RETNONE2((steps == std::vector<int>{1, 2, 3, 4, 5, 6}), "nested caller switching is incorrect");
+    }
+
+    struct DestructionProbe
+    {
+        explicit DestructionProbe(std::atomic<int> &destructions)
+            : count(destructions)
+        {
+        }
+
+        ~DestructionProbe()
+        {
+            count.fetch_add(1, std::memory_order_relaxed);
+        }
+
+        std::atomic<int> &count;
+    };
+
+    void TestFiber6()
+    {
+        std::atomic<int> destructions{0};
+        auto fiber = std::make_shared<pans::Fiber>([&]()
+                                                   {
+        DestructionProbe probe(destructions);
+        pans::Fiber::YieldToHold(); });
+        fiber->resume();
+        ASSERT_RETNONE2(fiber->getState() == pans::Fiber::State::WAITING, "fiber did not suspend before destruction");
+        fiber.reset();
+        ASSERT_RETNONE2(destructions.load(std::memory_order_relaxed) == 1, "fatal : fiber did not unwind stack objects");
+    }
+
+    void TestFiber7()
+    {
+        std::thread::id first_thread;
+        std::thread::id second_thread;
+        auto fiber = std::make_shared<pans::Fiber>([&]()
+                                                   {
+        first_thread = std::this_thread::get_id();
+        pans::Fiber::YieldToReady();
+        second_thread = std::this_thread::get_id(); });
+        fiber->resume();
+        std::thread worker([fiber]()
+                           { fiber->resume(); });
+        worker.join();
+        ASSERT_RETNONE2(fiber->getState() == pans::Fiber::State::TERM, "migrated fiber did not terminate");
+        ASSERT_RETNONE2(first_thread != second_thread, "fiber did not resume on the worker thread");
+    }
+
+    void TestFiber8()
+    {
+        for (int i = 0; i < 2000; ++i)
+        {
+            std::atomic<bool> entered{false};
+            std::atomic<bool> completed{false};
+            auto fiber = std::make_shared<pans::Fiber>([&]()
+                                                       {
+            entered.store(true, std::memory_order_release);
+            pans::Fiber::YieldToReady();
+            completed.store(true, std::memory_order_release); });
+            std::thread first_resume([fiber]()
+                                     { fiber->resume(); });
+            while (!entered.load(std::memory_order_acquire))
+            {
+                std::this_thread::yield();
+            }
+            while (fiber->getState() != pans::Fiber::State::READY)
+            {
+                std::this_thread::yield();
+            }
+            fiber->resume();
+            first_resume.join();
+            ASSERT_RETNONE2(completed.load(std::memory_order_acquire), "concurrent context handoff lost execution");
+            ASSERT_RETNONE2(fiber->getState() == pans::Fiber::State::TERM, "concurrent context handoff did not terminate");
+        }
+    }
+
+} // namespace
 
 int main()
 {
     const std::uint64_t baseline = pans::Fiber::TotalFibers();
+
     TestFiber1();
     TestFiber2();
     TestFiber3();
     TestFiber4();
+    TestFiber5();
+    TestFiber6();
+    TestFiber7();
+    TestFiber8();
 
     ASSERT_RETVAL2(pans::Fiber::TotalFibers() == baseline, EXIT_FAILURE, "fiber lifetime counter leaked");
+    return EXIT_SUCCESS;
 }
