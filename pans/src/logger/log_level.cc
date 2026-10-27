@@ -4,6 +4,7 @@
 #include <string>
 #include <array>
 
+#include <pans/macros.h>
 namespace pans
 {
 
@@ -28,6 +29,7 @@ namespace pans
     LogLevel::Level LogLevel::FromString(std::string_view value) noexcept
     {
         std::array<char, 6> normalized{};
+        ASSERT_RETVAL(value.size() < normalized.size(), Level::LOG_LV_INFO);
         std::transform(value.begin(), value.end(), normalized.begin(), [](unsigned char ch)
                        { return static_cast<char>(std::toupper(ch)); });
         const std::string_view upper_value(normalized.data(), value.size());
