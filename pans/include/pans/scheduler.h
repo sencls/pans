@@ -51,7 +51,7 @@ namespace pans
             bool need_tickle = false;
             {
                 std::lock_guard<std::mutex> lock(m_mutex);
-                need_tickle = schedulerNoLock(std::forward<FiberOrCallback>(task), thread_id);
+                need_tickle = scheduleNoLock(std::forward<FiberOrCallback>(task), thread_id);
             }
             if (need_tickle)
             {
@@ -111,7 +111,7 @@ namespace pans
             Task(Callback callback, ThreadId thread_id) : work(std::move(callback)), threadId(thread_id) {}
 
             [[nodiscard]] Fiber::ptr *fiber() noexcept { return std::get_if<Fiber::ptr>(&work); }
-            [[nodiscard]] Callback *Callback() noexcept { return std::get_if<Callback>(&work); }
+            [[nodiscard]] Callback *callback() noexcept { return std::get_if<Callback>(&work); }
 
             [[nodiscard]] bool valid() const noexcept
             {
@@ -123,6 +123,7 @@ namespace pans
                 {
                     return static_cast<bool>(*value);
                 }
+                return false;
             }
         };
 
@@ -139,69 +140,70 @@ namespace pans
         }
 
         template <typename Callable>
-            requires std::invocable < std::decay_t<Callable> &&std::constructible_from<Callback, Callable> [[nodiscard]] static Task MakeTask(Callable &&callback, ThreadId thread_id){
-                                          return Task(Callback(std::forward<Callable>(callback)), thread_id);
-
-    }
-
-    template <typename FiberOrCallback>
-    bool scheduleNoLock(FiberOrCallback &&task, ThreadId thread_id)
-    {
-        Task t = MakeTask(std::forward<FiberOrCallback>(task), thread_id);
-        if (!t.valid())
+            requires std::invocable<std::decay_t<Callable>> && std::constructible_from<Callback, Callable>
+        [[nodiscard]] static Task MakeTask(Callable &&callback, ThreadId thread_id)
         {
-            return false;
+            return Task(Callback(std::forward<Callable>(callback)), thread_id);
         }
-        const bool need_tickle = m_tasks.empty() || hasIdleThreads();
-        m_tasks.emplace_back(std::move(t));
-        return need_tickle;
-    }
 
-    [[nodiscard]] FetchResult fetchTask(ThreadId current_thread);
+        template <typename FiberOrCallback>
+        bool scheduleNoLock(FiberOrCallback &&task, ThreadId thread_id)
+        {
+            Task t = MakeTask(std::forward<FiberOrCallback>(task), thread_id);
+            if (!t.valid())
+            {
+                return false;
+            }
+            const bool need_tickle = m_tasks.empty() || hasIdleThreads();
+            m_tasks.emplace_back(std::move(t));
+            return need_tickle;
+        }
 
-    [[nodiscard]] bool hasRunnableTaskNoLock(ThreadId current_thread) const;
+        [[nodiscard]] FetchResult fetchTask(ThreadId current_thread);
 
-    [[nodiscard]] bool canStopNoLock() const noexcept;
+        [[nodiscard]] bool hasRunnableTaskNoLock(ThreadId current_thread) const;
 
-    void taskFinished() noexcept;
+        [[nodiscard]] bool canStopNoLock() const noexcept;
 
-    void reportFiberFailure(const Fiber::ptr &fiber) const noexcept;
+        void taskFinished() noexcept;
 
-private:
-    std::string m_name;
-    std::condition_variable m_condition;
-    std::vector<std::thread> m_threads;
-    std::list<Task> m_tasks;
-    Fiber::ptr m_rootFiber;
-    mutable std::mutex m_mutex;
-    bool m_useCaller{false};
-    bool m_started{false};
-    std::size_t m_registerWorkers{0};
+        void reportFiberFailure(const Fiber::ptr &fiber) const noexcept;
 
-protected:
-    std::vector<ThreadId> m_threadIds;
-    std::size_t m_threadCount{0};
-    std::atomic<std::size_t> m_activeThreadCount{0};
-    std::atomic<std::size_t> m_idleThreadCount{0};
-    std::atomic<bool> m_stopping{false};
-    std::atomic<bool> m_autoStop{false};
-    ThreadId m_rootThreadId{ANY_THREAD};
-};
+    private:
+        std::string m_name;
+        std::condition_variable m_condition;
+        std::vector<std::thread> m_threads;
+        std::list<Task> m_tasks;
+        Fiber::ptr m_rootFiber;
+        mutable std::mutex m_mutex;
+        bool m_useCaller{false};
+        bool m_started{false};
+        std::size_t m_registerWorkers{0};
 
-class PANS_API SchedulerSwitcher final
-{
-public:
-    explicit SchedulerSwitcher(Scheduler *target = nullptr);
-    ~SchedulerSwitcher() noexcept;
+    protected:
+        std::vector<ThreadId> m_threadIds;
+        std::size_t m_threadCount{0};
+        std::atomic<std::size_t> m_activeThreadCount{0};
+        std::atomic<std::size_t> m_idleThreadCount{0};
+        std::atomic<bool> m_stopping{false};
+        std::atomic<bool> m_autoStop{false};
+        ThreadId m_rootThreadId{ANY_THREAD};
+    };
 
-    SchedulerSwitcher(const SchedulerSwitcher &) = delete;
-    SchedulerSwitcher(SchedulerSwitcher &&) = delete;
-    SchedulerSwitcher &operator=(const SchedulerSwitcher &) = delete;
-    SchedulerSwitcher &operator=(SchedulerSwitcher &&) = delete;
+    class PANS_API SchedulerSwitcher final
+    {
+    public:
+        explicit SchedulerSwitcher(Scheduler *target = nullptr);
+        ~SchedulerSwitcher() noexcept;
 
-private:
-    Scheduler *m_caller = nullptr;
-};
+        SchedulerSwitcher(const SchedulerSwitcher &) = delete;
+        SchedulerSwitcher(SchedulerSwitcher &&) = delete;
+        SchedulerSwitcher &operator=(const SchedulerSwitcher &) = delete;
+        SchedulerSwitcher &operator=(SchedulerSwitcher &&) = delete;
+
+    private:
+        Scheduler *m_caller = nullptr;
+    };
 }
 
 #endif

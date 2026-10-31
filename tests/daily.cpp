@@ -9,13 +9,10 @@
 #include <string>
 #include <string_view>
 
+using namespace std;
+
 int main()
 {
-    std::string s = "Scut2024";
-    for (auto &t : s)
-    {
-        t = static_cast<ushort>(t) ^ static_cast<ushort>(s.size());
-    }
-    std::cout << s;
+
     return 0;
 }
