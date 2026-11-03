@@ -67,7 +67,7 @@ namespace pans
                 std::lock_guard<std::mutex> lock(m_mutex);
                 while (begin != end)
                 {
-                    need_tickle = SchedulerNoLock(*begin, ANY_THREAD) || need_tickle;
+                    need_tickle = scheduleNoLock(*begin, ANY_THREAD) || need_tickle;
                     ++begin;
                 }
             }
