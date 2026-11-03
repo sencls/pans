@@ -2,6 +2,7 @@
 #include <chrono>
 #include <exception>
 #include <ostream>
+#include <string>
 #include <utility>
 
 #include <pans/logger/log.h>
@@ -12,6 +13,7 @@ namespace pans
 {
     namespace
     {
+
         const LoggerPtr g_logger = PANS_LOG_NAME("system");
         thread_local Scheduler *t_scheduler = nullptr;
         thread_local Fiber *t_schedulerFiber = nullptr;
@@ -21,8 +23,11 @@ namespace pans
             const std::string base = scheduler_name.empty() ? "scheduler" : scheduler_name;
             return base + "_" + std::to_string(index);
         }
+
     } // namespace
-    Scheduler::Scheduler(std::size_t threads, bool use_caller, const std::string &name) : m_name(name), m_useCaller(use_caller)
+
+    Scheduler::Scheduler(std::size_t threads, bool use_caller, const std::string &name)
+        : m_name(name), m_useCaller(use_caller)
     {
         if (threads <= 0)
         {
@@ -48,6 +53,7 @@ namespace pans
         }
         m_threadCount = threads;
     }
+
     Scheduler::~Scheduler()
     {
         try
@@ -64,14 +70,17 @@ namespace pans
             t_schedulerFiber = nullptr;
         }
     }
+
     Scheduler *Scheduler::GetThis() noexcept
     {
         return t_scheduler;
     }
+
     Fiber *Scheduler::GetMainFiber() noexcept
     {
         return t_schedulerFiber;
     }
+
     void Scheduler::start()
     {
         std::unique_lock<std::mutex> lock(m_mutex);
@@ -92,19 +101,22 @@ namespace pans
                 throw std::logic_error("caller scheduler root fiber is still active");
             }
         }
+
         m_autoStop.store(false, std::memory_order_release);
         m_stopping.store(false, std::memory_order_release);
-        m_registerWorkers = 0;
+        m_registeredWorkers = 0;
         m_started = true;
         m_threads.clear();
         m_threads.reserve(m_threadCount);
+
         try
         {
-            for (std::size_t index; index < m_threadCount; ++index)
+            for (std::size_t index = 0; index < m_threadCount; ++index)
             {
                 m_threads.emplace_back([this, index]()
-                                       { SetThreadName(WorkerName(m_name, index));
-                                        run(); });
+                                       {
+                SetThreadName(WorkerName(m_name, index));
+                run(); });
             }
         }
         catch (...)
@@ -117,6 +129,7 @@ namespace pans
             m_started = false;
             lock.unlock();
             m_condition.notify_all();
+
             for (std::thread &thread : threads)
             {
                 if (thread.joinable())
@@ -124,15 +137,18 @@ namespace pans
                     thread.join();
                 }
             }
+
+            throw;
         }
         m_condition.wait(lock, [this]()
-                         { return m_registerWorkers == m_threadCount; });
+                         { return m_registeredWorkers == m_threadCount; });
     }
 
     Scheduler::FetchResult Scheduler::fetchTask(ThreadId current_thread)
     {
         FetchResult result;
         std::lock_guard<std::mutex> lock(m_mutex);
+
         for (auto it = m_tasks.begin(); it != m_tasks.end();)
         {
             if (!it->valid())
@@ -183,24 +199,34 @@ namespace pans
         }
         return result;
     }
+
     void Scheduler::setThis() noexcept
     {
         t_scheduler = this;
     }
+
+    void Scheduler::tickle()
+    {
+        m_condition.notify_all();
+    }
+
     void Scheduler::run()
     {
         Scheduler *const previous_scheduler = t_scheduler;
         Fiber *const previous_scheduler_fiber = t_schedulerFiber;
+
         setThis();
+
         t_schedulerFiber = Fiber::Current();
         const ThreadId thread_id = GetThreadId();
         if (thread_id != m_rootThreadId)
         {
             std::lock_guard<std::mutex> lock(m_mutex);
             m_threadIds.push_back(thread_id);
-            ++m_registerWorkers;
+            ++m_registeredWorkers;
             m_condition.notify_all();
         }
+
         auto idle_fiber = std::make_shared<Fiber>([this]()
                                                   { idle(); });
         Fiber::ptr callback_fiber;
@@ -222,7 +248,9 @@ namespace pans
                     std::this_thread::yield();
                     continue;
                 }
+
                 m_idleThreadCount.fetch_add(1, std::memory_order_acq_rel);
+
                 try
                 {
                     Fiber::State idle_state = idle_fiber->getState();
@@ -236,9 +264,9 @@ namespace pans
                         idle_fiber->resume();
                     }
                 }
-                catch (const std::exception &e)
+                catch (const std::exception &exception)
                 {
-                    LOG_ERROR << "scheduler=" << m_name << " idle fiber failed: " << e.what();
+                    LOG_ERROR << "scheduler=" << m_name << " idle fiber failed: " << exception.what();
                 }
                 m_idleThreadCount.fetch_sub(1, std::memory_order_acq_rel);
                 if (idle_fiber->getState() == Fiber::State::EXCEPT)
@@ -252,6 +280,7 @@ namespace pans
                 }
                 continue;
             }
+
             Fiber::ptr running_fiber;
             const bool callback_task = fetched.task.callback() != nullptr;
             if (Fiber::ptr *fiber = fetched.task.fiber())
@@ -277,14 +306,17 @@ namespace pans
                 suspend_state = running_fiber->resume();
                 resumed = true;
             }
-            catch (const std::exception &e)
+            catch (const std::exception &exception)
             {
-                LOG_ERROR << "scheduler=" << m_name << " could not resume fiber=" << running_fiber->getId() << ": " << e.what();
+                LOG_ERROR << "scheduler=" << m_name << " could not resume fiber="
+                          << running_fiber->getId() << ": " << exception.what();
             }
             catch (...)
             {
-                LOG_ERROR << "scheduler=" << m_name << " could not resume fiber=" << running_fiber->getId() << ": " << "unknown error";
+                LOG_ERROR << "scheduler=" << m_name << " could not resume fiber="
+                          << running_fiber->getId() << ": unknown error";
             }
+
             const Fiber::State state = resumed ? suspend_state : running_fiber->getState();
             if (state == Fiber::State::READY)
             {
@@ -307,6 +339,7 @@ namespace pans
             }
             taskFinished();
         }
+
         t_scheduler = previous_scheduler;
         t_schedulerFiber = previous_scheduler_fiber;
     }
@@ -331,6 +364,7 @@ namespace pans
         }
         return false;
     }
+
     void Scheduler::idle()
     {
         const ThreadId thread_id = GetThreadId();
@@ -346,6 +380,7 @@ namespace pans
             }
         }
     }
+
     void Scheduler::stop()
     {
         if (GetThis() == this && (!m_useCaller || GetThreadId() != m_rootThreadId))
@@ -356,6 +391,7 @@ namespace pans
         {
             throw std::logic_error("a caller scheduler must be stopped by its construction thread");
         }
+
         std::size_t wake_count = 0;
         {
             std::lock_guard<std::mutex> lock(m_mutex);
@@ -389,7 +425,7 @@ namespace pans
                 reportFiberFailure(m_rootFiber);
             }
         }
-        std::vector<std::thread> threads{};
+        std::vector<std::thread> threads;
         {
             std::lock_guard<std::mutex> lock(m_mutex);
             threads.swap(m_threads);
@@ -404,7 +440,7 @@ namespace pans
         {
             std::lock_guard<std::mutex> lock(m_mutex);
             m_started = false;
-            m_registerWorkers = 0;
+            m_registeredWorkers = 0;
             if (m_useCaller)
             {
                 m_threadIds.erase(std::remove_if(m_threadIds.begin(), m_threadIds.end(), [this](ThreadId id)
@@ -429,13 +465,13 @@ namespace pans
         {
             fiber->rethrowIfFailed();
         }
-        catch (const std::exception &e)
+        catch (const std::exception &exception)
         {
-            LOG_ERROR << "scheduler=" << m_name << " fiber= " << fiber->getId() << " failed " << e.what();
+            LOG_ERROR << "scheduler=" << m_name << " fiber=" << fiber->getId() << " failed: " << exception.what();
         }
         catch (...)
         {
-            LOG_ERROR << "scheduler=" << m_name << " fiber= " << fiber->getId() << " failed " << "unknown error";
+            LOG_ERROR << "scheduler=" << m_name << " fiber=" << fiber->getId() << " failed with an unknown exception";
         }
     }
 
@@ -444,6 +480,7 @@ namespace pans
         std::lock_guard<std::mutex> lock(m_mutex);
         return canStopNoLock();
     }
+
     void Scheduler::switchTo(ThreadId thread_id)
     {
         Scheduler *const source = GetThis();
@@ -463,8 +500,12 @@ namespace pans
     std::ostream &Scheduler::dump(std::ostream &output) const
     {
         std::lock_guard<std::mutex> lock(m_mutex);
-        output << "[Scheduler name=" << m_name << " workers=" << m_threadCount << " active=" << m_activeThreadCount.load(std::memory_order::acquire)
-               << " idle=" << m_idleThreadCount.load(std::memory_order_acquire) << " stopping=" << m_stopping.load(std::memory_order_acquire) << "]\n";
+        output << "[Scheduler name=" << m_name
+               << " workers=" << m_threadCount
+               << " active=" << m_activeThreadCount.load(std::memory_order_acquire)
+               << " idle=" << m_idleThreadCount.load(std::memory_order_acquire)
+               << " stopping=" << m_stopping.load(std::memory_order_acquire)
+               << "]\n    ";
         for (std::size_t index = 0; index < m_threadIds.size(); ++index)
         {
             if (index != 0)
@@ -476,18 +517,16 @@ namespace pans
         return output;
     }
 
-    void Scheduler::tickle()
-    {
-        m_condition.notify_all();
-    }
-    SchedulerSwitcher::SchedulerSwitcher(Scheduler *target) : m_caller(Scheduler::GetThis())
+    SchedulerSwitcher::SchedulerSwitcher(Scheduler *target)
+        : m_caller(Scheduler::GetThis())
     {
         if (target != nullptr)
         {
             target->switchTo();
         }
     }
-    SchedulerSwitcher::~SchedulerSwitcher()
+
+    SchedulerSwitcher::~SchedulerSwitcher() noexcept
     {
         if (m_caller == nullptr)
         {
@@ -497,14 +536,14 @@ namespace pans
         {
             m_caller->switchTo();
         }
-        catch (const std::exception &e)
+        catch (const std::exception &exception)
         {
-            LOG_ERROR << "SchedulerSwitcher could not return to the caller: " << e.what();
+            LOG_ERROR << "SchedulerSwitcher could not return to the caller: " << exception.what();
         }
         catch (...)
         {
-            LOG_ERROR << "SchedulerSwitcher could not return to the caller: "
-                      << "unknown error";
+            LOG_ERROR << "SchedulerSwitcher could not return to the caller: unknown error";
         }
     }
+
 } // namespace pans

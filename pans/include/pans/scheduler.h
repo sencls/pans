@@ -178,7 +178,7 @@ namespace pans
         mutable std::mutex m_mutex;
         bool m_useCaller{false};
         bool m_started{false};
-        std::size_t m_registerWorkers{0};
+        std::size_t m_registeredWorkers{0};
 
     protected:
         std::vector<ThreadId> m_threadIds;
