@@ -59,7 +59,6 @@ namespace
             Check(pans::Scheduler::GetThis() != nullptr, "callback lost its scheduler context");
             callback_count.fetch_add(1, std::memory_order_relaxed); });
         }
-
         scheduler.addTask([&]()
                           {
         for (int step = 0; step < 3; ++step)
