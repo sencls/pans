@@ -1,25 +1,26 @@
-#ifndef PANS_INCLUDE_PANS_TIMER
-#define PANS_INCLUDE_PANS_TIMER
+#ifndef PANS_INCLUDE_PANS_TIMER_H
+#define PANS_INCLUDE_PANS_TIMER_H
 
 #include <chrono>
 #include <atomic>
 #include <functional>
 #include <memory>
-#include <vector>
 #include <optional>
+#include <vector>
 
 #include <pans/export.h>
 #include <pans/types.h>
 
 namespace pans
 {
+
     class TimerManager;
     class PANS_API Timer final : public std::enable_shared_from_this<Timer>
     {
     public:
         using ptr = std::shared_ptr<Timer>;
         using Callback = std::function<void()>;
-        using Clock = std::chrono::steady_clock; // 不收单波脉冲影响
+        using Clock = std::chrono::steady_clock;
         using Duration = std::chrono::milliseconds;
 
         bool cancel();
@@ -46,26 +47,27 @@ namespace pans
         using Clock = Timer::Clock;
         using Duration = Timer::Duration;
         using Callback = Timer::Callback;
+
         TimerManager();
         virtual ~TimerManager();
 
         TimerManager(const TimerManager &) = delete;
-        TimerManager(TimerManager &&) = delete;
         TimerManager &operator=(const TimerManager &) = delete;
+        TimerManager(TimerManager &&) = delete;
         TimerManager &operator=(TimerManager &&) = delete;
 
         Timer::ptr addTimer(Duration interval, Callback callback, bool recurring = false);
-        Timer::ptr addTimer(u64 miliseconds, Callback callback, bool recurring = false);
-
+        Timer::ptr addTimer(u64 milliseconds, Callback callback, bool recurring = false);
         Timer::ptr addConditionTimer(Duration interval, Callback callback, std::weak_ptr<void> condition, bool recurring = false);
-        Timer::ptr addConditionTimer(u64 miliseconds, Callback callback, std::weak_ptr<void> condition, bool recurring = false);
+        Timer::ptr addConditionTimer(u64 milliseconds, Callback callback, std::weak_ptr<void> condition, bool recurring = false);
 
         [[nodiscard]] std::optional<Duration> getNextTimeout() const;
         [[nodiscard]] u64 getNextTimer() const;
-        void listExpiredCb(std::vector<Callback> &callbacks);
 
+        void listExpiredCb(std::vector<Callback> &callbacks);
         [[nodiscard]] bool hasTimer() const;
         void cancelAllTimers();
+
         bool cancel(const Timer::ptr &timer);
         bool refresh(const Timer::ptr &timer);
         bool reset(const Timer::ptr &timer, Duration interval, bool from_now);
@@ -79,6 +81,7 @@ namespace pans
         struct Impl;
         std::unique_ptr<Impl> m_impl;
     };
-}
 
-#endif
+} // namespace pans
+
+#endif // PANS_INCLUDE_PANS_TIMER_H

@@ -11,18 +11,21 @@
 
 namespace pans
 {
+
     namespace
     {
-        [[nodiscard]] Timer::Duration CheckDuration(u64 miliseconds)
+
+        [[nodiscard]] Timer::Duration CheckedDuration(u64 milliseconds)
         {
             using Rep = Timer::Duration::rep;
             constexpr auto MAX = static_cast<u64>(std::numeric_limits<Rep>::max());
-            if (miliseconds > MAX)
+            if (milliseconds > MAX)
             {
-                throw std::overflow_error("timer interval exceeds miliseconds range");
+                throw std::overflow_error("timer interval exceeds milliseconds range");
             }
-            return Timer::Duration(static_cast<Rep>(miliseconds));
+            return Timer::Duration(static_cast<Rep>(milliseconds));
         }
+
     } // namespace
 
     struct Timer::Comparator
@@ -30,11 +33,17 @@ namespace pans
         bool operator()(const Timer::ptr &lhs, const Timer::ptr &rhs) const noexcept
         {
             if (lhs == rhs)
+            {
                 return false;
+            }
             if (!lhs)
+            {
                 return true;
+            }
             if (!rhs)
+            {
                 return false;
+            }
             if (lhs->m_next != rhs->m_next)
             {
                 return lhs->m_next < rhs->m_next;
@@ -42,38 +51,46 @@ namespace pans
             return lhs.get() < rhs.get();
         }
     };
+
     struct TimerManager::Impl
     {
         mutable std::shared_mutex mutex;
         std::set<Timer::ptr, Timer::Comparator> timers;
     };
 
+    Timer::Timer(Duration interval, Callback callback, bool recurring, TimerManager *manager)
+        : m_interval(interval), m_next(Clock::now() + interval), m_callback(std::move(callback)), m_manager(manager), m_recurring(recurring)
+    {
+    }
+
     bool Timer::cancel()
     {
         auto *manager = m_manager.load();
         return manager != nullptr && manager->cancel(shared_from_this());
     }
+
     bool Timer::refresh()
     {
         auto *manager = m_manager.load();
         return manager != nullptr && manager->refresh(shared_from_this());
     }
+
     bool Timer::reset(Duration interval, bool from_now)
     {
         auto *manager = m_manager.load();
         return manager != nullptr && manager->reset(shared_from_this(), interval, from_now);
     }
+
     bool Timer::reset(u64 milliseconds, bool from_now)
     {
-        return reset(CheckDuration(milliseconds), from_now);
+        return reset(CheckedDuration(milliseconds), from_now);
     }
 
-    Timer::Timer(Duration interval, Callback callback, bool recurring, TimerManager *manager) : m_interval(interval), m_next(Clock::now() + interval), m_callback(callback), m_manager(manager), m_recurring(recurring)
+    TimerManager::TimerManager()
+        : m_impl(std::make_unique<Impl>())
     {
     }
-    TimerManager::TimerManager() : m_impl(std::make_unique<Impl>())
-    {
-    }
+
     TimerManager::~TimerManager()
     {
         cancelAllTimers();
@@ -81,7 +98,7 @@ namespace pans
 
     Timer::ptr TimerManager::addTimer(Duration interval, Callback callback, bool recurring)
     {
-        ASSERT_RETVAL2(callback && (interval > Duration::zero() || (interval == Duration::zero() && !recurring)), nullptr, "invalid parms when adding timer");
+        ASSERT_RETVAL2(callback && (interval > Duration::zero() || (interval == Duration::zero() && !recurring)), nullptr, "invalid params when adding timer");
         Timer::ptr timer(new Timer(interval, std::move(callback), recurring, this));
         bool inserted_at_front = false;
         {
@@ -95,9 +112,10 @@ namespace pans
         }
         return timer;
     }
-    Timer::ptr TimerManager::addTimer(u64 miliseconds, Callback callback, bool recurring)
+
+    Timer::ptr TimerManager::addTimer(u64 milliseconds, Callback callback, bool recurring)
     {
-        return addTimer(CheckDuration(miliseconds), std::move(callback), recurring);
+        return addTimer(CheckedDuration(milliseconds), std::move(callback), recurring);
     }
 
     Timer::ptr TimerManager::addConditionTimer(Duration interval, Callback callback, std::weak_ptr<void> condition, bool recurring)
@@ -105,14 +123,15 @@ namespace pans
         ASSERT_RETVAL2(callback, nullptr, "condition timer callback must not be empty");
         return addTimer(interval, [condition = std::move(condition), callback = std::move(callback)]() mutable
                         {
-            if(condition.lock())
+            if (condition.lock())
             {
                 callback();
             } }, recurring);
     }
-    Timer::ptr TimerManager::addConditionTimer(u64 miliseconds, Callback callback, std::weak_ptr<void> condition, bool recurring)
+
+    Timer::ptr TimerManager::addConditionTimer(u64 milliseconds, Callback callback, std::weak_ptr<void> condition, bool recurring)
     {
-        return addConditionTimer(CheckDuration(miliseconds), std::move(callback), std::move(condition), recurring);
+        return addConditionTimer(CheckedDuration(milliseconds), std::move(callback), std::move(condition), recurring);
     }
 
     std::optional<TimerManager::Duration> TimerManager::getNextTimeout() const
@@ -130,15 +149,17 @@ namespace pans
         }
         return std::chrono::ceil<Duration>(next - now);
     }
+
     u64 TimerManager::getNextTimer() const
     {
         const std::optional<Duration> timeout = getNextTimeout();
         if (!timeout)
         {
-            return INVALID16;
+            return INVALID64;
         }
         return static_cast<u64>(timeout->count());
     }
+
     void TimerManager::listExpiredCb(std::vector<Callback> &callbacks)
     {
         std::vector<Callback> expired_callbacks;
@@ -182,6 +203,7 @@ namespace pans
         std::shared_lock lock(m_impl->mutex);
         return !m_impl->timers.empty();
     }
+
     void TimerManager::cancelAllTimers()
     {
         std::vector<Callback> discarded_callbacks;
@@ -193,12 +215,13 @@ namespace pans
                 timer->m_manager = nullptr;
                 if (timer->m_callback)
                 {
-                    discarded_callbacks.push_back(std::move(timer->m_callback)); // 防止死锁
+                    discarded_callbacks.push_back(std::move(timer->m_callback));
                 }
             }
             m_impl->timers.clear();
         }
     }
+
     bool TimerManager::cancel(const Timer::ptr &timer)
     {
         [[maybe_unused]] Callback discarded_callback;
@@ -219,6 +242,7 @@ namespace pans
         }
         return true;
     }
+
     bool TimerManager::refresh(const Timer::ptr &timer)
     {
         std::unique_lock lock(m_impl->mutex);
@@ -236,6 +260,7 @@ namespace pans
         m_impl->timers.insert(timer);
         return true;
     }
+
     bool TimerManager::reset(const Timer::ptr &timer, Duration interval, bool from_now)
     {
         ASSERT_RETVAL(timer && (interval > Duration::zero() || (!timer->m_recurring && interval == Duration::zero())), false);
@@ -264,8 +289,10 @@ namespace pans
         }
         return true;
     }
+
     bool TimerManager::reset(const Timer::ptr &timer, u64 milliseconds, bool from_now)
     {
-        return reset(timer, CheckDuration(milliseconds), from_now);
+        return reset(timer, CheckedDuration(milliseconds), from_now);
     }
+
 } // namespace pans
