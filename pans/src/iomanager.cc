@@ -12,7 +12,8 @@ namespace pans
 {
     namespace
     {
-        const LoggerPtr g_logger = PNAS_LOG_NAME("system");
+
+        const LoggerPtr g_logger = PANS_LOG_NAME("system");
         constexpr int MAX_EPOLL_TIMEOUT_MS = 3000;
         constexpr std::size_t MAX_EPOLL_EVENTS = 256;
         constexpr u64 WAKE_TOKEN = MAX_U64;
@@ -32,8 +33,9 @@ namespace pans
         void LogEpollError(const char *operation, int fd) noexcept
         {
             const int error = errno;
-            LOG_ERROR << operation << " fd=" << fd << " failed:errno=" << error << " (" << std::strerror(error) << ")";
+            LOG_ERROR << operation << " fd=" << fd << " failed: errno=" << error << " (" << std::strerror(error) << ")";
         }
+
     } // namespace
 
     struct IOManager::Impl
@@ -48,7 +50,9 @@ namespace pans
             [[nodiscard]] bool valid() const noexcept
             {
                 if (scheduler == nullptr)
+                {
                     return false;
+                }
                 if (const auto *fiber = std::get_if<Fiber::ptr>(&action))
                 {
                     return static_cast<bool>(*fiber);
@@ -72,7 +76,11 @@ namespace pans
 
         struct FdContext
         {
-            explicit FdContext(int descriptor) : fd(descriptor) {}
+            explicit FdContext(int descriptor)
+                : fd(descriptor)
+            {
+            }
+
             [[nodiscard]] EventContext &context(Event event)
             {
                 if (event == Event::READ)
@@ -105,7 +113,7 @@ namespace pans
 
         [[nodiscard]] FdContext *findContext(int fd) const
         {
-            std::shared_lock lock(m_contextMutex);
+            std::shared_lock lock(m_contextsMutex);
             const auto it = m_contexts.find(fd);
             return it == m_contexts.end() ? nullptr : it->second.get();
         }
@@ -113,14 +121,14 @@ namespace pans
         [[nodiscard]] FdContext *getOrCreateContext(int fd)
         {
             {
-                std::shared_lock lock(m_contextMutex);
+                std::shared_lock lock(m_contextsMutex);
                 const auto it = m_contexts.find(fd);
                 if (it != m_contexts.end())
                 {
                     return it->second.get();
                 }
             }
-            std::unique_lock lock(m_contextMutex);
+            std::unique_lock lock(m_contextsMutex);
             auto [it, inserted] = m_contexts.try_emplace(fd);
             if (inserted)
             {
@@ -131,7 +139,7 @@ namespace pans
 
         [[nodiscard]] bool updateInterest(FdContext &context, u32 new_events)
         {
-            const int operation = context.events == 0 ? EPOLL_CTL_ADD : (new_events == 0U ? EPOLL_CTL_DEL : EPOLL_CTL_MOD);
+            const int operation = context.events == 0U ? EPOLL_CTL_ADD : (new_events == 0U ? EPOLL_CTL_DEL : EPOLL_CTL_MOD);
             epoll_event event{};
             event.events = EPOLLET;
             if (new_events & static_cast<u32>(Event::READ))
@@ -145,13 +153,14 @@ namespace pans
             event.data.u64 = (static_cast<u64>(context.generation) << 32U) | static_cast<u32>(context.fd);
             if (::epoll_ctl(m_epollFd, operation, context.fd, &event))
             {
-                if (new_events == 0U && (errno == EBADE || errno == ENOENT))
+                if (new_events == 0U && (errno == EBADF || errno == ENOENT))
                 {
                     context.advanceGeneration();
                     context.events = 0U;
                     return true;
                 }
                 LogEpollError("epoll_ctl", context.fd);
+                return false;
             }
             if (new_events == 0U)
             {
@@ -161,12 +170,20 @@ namespace pans
             return true;
         }
 
+        [[nodiscard]] EventContext takeEvent(FdContext &context, Event event)
+        {
+            EventContext result = std::move(context.context(event));
+            context.context(event).reset();
+            return result;
+        }
+
         void dispatch(EventContext event) noexcept
         {
             if (!event.valid())
             {
                 return;
             }
+
             try
             {
                 if (auto *callback = std::get_if<EventContext::Callback>(&event.action))
@@ -182,19 +199,14 @@ namespace pans
                     event.scheduler->addTask(std::move(*fiber));
                 }
             }
-            catch (const std::exception &e)
+            catch (const std::exception &exception)
             {
-                LOG_ERROR << "could not dispatch IO event: " << e.what();
+                LOG_ERROR << "could not dispatch IO event: " << exception.what();
             }
             catch (...)
             {
                 LOG_ERROR << "could not dispatch IO event: unknown error";
             }
-        }
-
-        [[nodiscard]] EventContext takeEvent(FdContext &context, Event event)
-        {
-            EventContext result = std::move(context.context(event));
         }
 
         static_assert(static_cast<u32>(Event::READ) == static_cast<u32>(EPOLLIN));
@@ -205,7 +217,7 @@ namespace pans
             if (token == WAKE_TOKEN)
             {
                 u64 value = 0;
-                while (::read(m_wakeFd, &value, sizeof(value) < 0 && errno == EINTR))
+                while (::read(m_wakeFd, &value, sizeof(value)) < 0 && errno == EINTR)
                 {
                 }
                 return;
@@ -215,11 +227,12 @@ namespace pans
             {
                 return;
             }
-            EventContext read_context, write_context;
+            EventContext read_context;
+            EventContext write_context;
             std::size_t triggered = 0;
             {
                 std::lock_guard lock(context->mutex);
-                if (context->generation != static_cast<u32>(token >> 22) || context->events == 0U)
+                if (context->generation != static_cast<u32>(token >> 32U) || context->events == 0U)
                 {
                     return;
                 }
@@ -258,6 +271,45 @@ namespace pans
             dispatch(std::move(write_context));
         }
 
+        void cancelEvents() noexcept
+        {
+            std::vector<EventContext> canceled;
+            std::size_t removed = 0;
+            std::unique_lock contexts_lock(m_contextsMutex);
+            for (auto &[_, context_owner] : m_contexts)
+            {
+                FdContext &context = *context_owner;
+                std::lock_guard context_lock(context.mutex);
+                if (context.events == 0U)
+                {
+                    continue;
+                }
+                epoll_event ignored{};
+                (void)::epoll_ctl(m_epollFd, EPOLL_CTL_DEL, context.fd, &ignored);
+                if (context.events & static_cast<u32>(Event::READ))
+                {
+                    canceled.push_back(takeEvent(context, Event::READ));
+                    ++removed;
+                }
+                if (context.events & static_cast<u32>(Event::WRITE))
+                {
+                    canceled.push_back(takeEvent(context, Event::WRITE));
+                    ++removed;
+                }
+                context.events = 0U;
+                context.advanceGeneration();
+            }
+            contexts_lock.unlock();
+            if (removed != 0)
+            {
+                m_pendingEventCount.fetch_sub(removed, std::memory_order_acq_rel);
+            }
+            for (auto &event : canceled)
+            {
+                dispatch(std::move(event));
+            }
+        }
+
         std::atomic<bool> m_shuttingDown{false};
         std::mutex m_mutex;
         std::unordered_map<u64, std::function<void()>> m_waitCancellations;
@@ -265,11 +317,12 @@ namespace pans
         int m_epollFd{-1};
         int m_wakeFd{-1};
         std::atomic<std::size_t> m_pendingEventCount{0};
-        mutable std::shared_mutex m_contextMutex;
+        mutable std::shared_mutex m_contextsMutex;
         std::unordered_map<int, std::unique_ptr<FdContext>> m_contexts;
     };
 
-    IOManager::IOManager(std::size_t threads, bool use_caller, const std::string &name) : Scheduler(threads, use_caller, name), m_impl(std::make_unique<Impl>())
+    IOManager::IOManager(std::size_t threads, bool use_caller, const std::string &name)
+        : Scheduler(threads, use_caller, name), m_impl(std::make_unique<Impl>())
     {
         m_impl->m_epollFd = ::epoll_create1(EPOLL_CLOEXEC);
         if (m_impl->m_epollFd < 0)
@@ -285,7 +338,7 @@ namespace pans
             throw std::system_error(error, std::generic_category(), "eventfd");
         }
         epoll_event event{};
-        event.events = EPOLLIN; // IO多路复用，水平触发，边缘触发
+        event.events = EPOLLIN;
         event.data.u64 = WAKE_TOKEN;
         if (::epoll_ctl(m_impl->m_epollFd, EPOLL_CTL_ADD, m_impl->m_wakeFd, &event) != 0)
         {
@@ -319,7 +372,7 @@ namespace pans
         }
     }
 
-    int IOManager::addEvent(int fd, Event event, std::function<void()> callback = {})
+    int IOManager::addEvent(int fd, Event event, std::function<void()> callback)
     {
         ASSERT_RETVAL(fd >= 0 && (event == Event::READ || event == Event::WRITE), -1);
         std::lock_guard lock(m_impl->m_mutex);
@@ -351,8 +404,8 @@ namespace pans
             LOG_ERROR << "addEvent fd=" << fd << " event=" << static_cast<u32>(context->events);
             ASSERT_RETVAL(false, -1);
         }
-        const u32 new_evnets = context->events | static_cast<u32>(event);
-        if (!m_impl->updateInterest(*context, new_evnets))
+        const u32 new_events = context->events | static_cast<u32>(event);
+        if (!m_impl->updateInterest(*context, new_events))
         {
             ASSERT_RETVAL(false, -2);
         }
@@ -360,6 +413,7 @@ namespace pans
         m_impl->m_pendingEventCount.fetch_add(1, std::memory_order_acq_rel);
         return 0;
     }
+
     bool IOManager::delEvent(int fd, Event event)
     {
         Impl::FdContext *context = m_impl->findContext(fd);
@@ -382,6 +436,7 @@ namespace pans
             discarded = m_impl->takeEvent(*context, event);
         }
         m_impl->m_pendingEventCount.fetch_sub(1, std::memory_order_acq_rel);
+        return true;
     }
 
     bool IOManager::cancelEvent(int fd, Event event)
@@ -431,6 +486,11 @@ namespace pans
             {
                 return false;
             }
+            if (old_events & static_cast<u32>(Event::READ))
+            {
+                read_context = m_impl->takeEvent(*context, Event::READ);
+                ++canceled;
+            }
             if (old_events & static_cast<u32>(Event::WRITE))
             {
                 write_context = m_impl->takeEvent(*context, Event::WRITE);
@@ -453,13 +513,14 @@ namespace pans
         }
         return canceled;
     }
+
     bool IOManager::CancelEventAcrossManagers(int fd, Event event)
     {
         bool canceled = false;
         std::lock_guard lock(GetIOManagerMutex());
         for (auto *manager : GetIOManagerRegistry())
         {
-            canceled = manager->cancelEvent(fd, event) | canceled;
+            canceled = manager->cancelEvent(fd, event) || canceled;
         }
         return canceled;
     }
@@ -481,6 +542,7 @@ namespace pans
         m_impl->m_waitCancellations.emplace(key, std::move(action));
         return key;
     }
+
     void IOManager::unregisterCancellationAction(u64 key) noexcept
     {
         [[maybe_unused]] std::function<void()> discarded;
@@ -495,6 +557,7 @@ namespace pans
             m_impl->m_waitCancellations.erase(it);
         }
     }
+
     bool IOManager::isShuttingDown() const noexcept
     {
         return m_impl->m_shuttingDown.load(std::memory_order_acquire);
@@ -507,22 +570,26 @@ namespace pans
         do
         {
             result = ::write(m_impl->m_wakeFd, &ONE, sizeof(ONE));
-        } while (result < 0 &&errno = EINTR);
+        } while (result < 0 && errno == EINTR);
+
         if (result < 0 && errno != EAGAIN)
         {
             LogEpollError("eventfd write", m_impl->m_wakeFd);
         }
     }
+
     bool IOManager::canStop(u64 &timeout)
     {
         timeout = getNextTimer();
         return timeout == INVALID64 && m_impl->m_pendingEventCount.load(std::memory_order_acquire) == 0 && Scheduler::canStop();
     }
+
     bool IOManager::canStop()
     {
         u64 timeout = INVALID64;
         return canStop(timeout);
     }
+
     void IOManager::idle()
     {
         std::array<epoll_event, MAX_EPOLL_EVENTS> events{};
@@ -536,7 +603,7 @@ namespace pans
                 {
                     return;
                 }
-                const int timeout = next_timeout == INVALID64 ? MAX_EPOLL_TIMEOUT_MS : static_cast<int>(std::min(next_timeout, MAX_EPOLL_TIMEOUT_MS));
+                const int timeout = next_timeout == INVALID64 ? MAX_EPOLL_TIMEOUT_MS : static_cast<int>(std::min<u64>(next_timeout, MAX_EPOLL_TIMEOUT_MS));
                 ready_count = ::epoll_wait(m_impl->m_epollFd, events.data(), static_cast<int>(events.size()), timeout);
             } while (ready_count < 0 && errno == EINTR);
 
@@ -553,9 +620,47 @@ namespace pans
             Fiber::YieldToHold(Fiber::WaitReason::External);
         }
     }
+
     void IOManager::onTimerInsertedAtFront()
     {
         tickle();
+    }
+
+    IOManager::~IOManager()
+    {
+        std::unordered_map<u64, std::function<void()>> cancellations;
+        {
+            std::lock_guard lock(m_impl->m_mutex);
+            m_impl->m_shuttingDown.store(true, std::memory_order_release);
+            cancellations.swap(m_impl->m_waitCancellations);
+        }
+        {
+            std::lock_guard registry_lock(GetIOManagerMutex());
+            GetIOManagerRegistry().erase(this);
+        }
+
+        for (auto &[_, cb] : cancellations)
+        {
+            cb();
+        }
+        cancelAllTimers();
+        m_impl->cancelEvents();
+        try
+        {
+            Scheduler::stop();
+        }
+        catch (...)
+        {
+            std::terminate();
+        }
+        if (m_impl->m_wakeFd >= 0)
+        {
+            ::close(m_impl->m_wakeFd);
+        }
+        if (m_impl->m_epollFd >= 0)
+        {
+            ::close(m_impl->m_epollFd);
+        }
     }
 
 } // namespace pans

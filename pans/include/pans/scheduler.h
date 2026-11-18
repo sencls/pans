@@ -81,7 +81,7 @@ namespace pans
 
         std::ostream &dump(std::ostream &output) const;
 
-    private:
+    protected:
         virtual void tickle();
 
         void run();

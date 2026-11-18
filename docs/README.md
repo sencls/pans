@@ -1,3 +1,6 @@
+来源于B站up 一毛架构师
+感谢老师的古法教学，收获匪浅
+
 参考 sylar 服务器框架的架构思想，从零独立设计重写的 Linux C++ 服务器基础库。采用 include/src 分离、pimpl + 命名空间 + PANS_API 导出宏的正规库结构，已实现 配置 / 日志 / 协程 / 同步原语 四大模块，协程调度器与 IO 模块开发中。
 
 用户态协程：基于 boost::context::fiber + protected_fixedsize_stack 实现非对称协程，支持保护页栈防越界、std::exception_ptr 跨协程异常传递（rethrowFailed()），并设计 WaitReason{IO, Timer, Semaphore, External} 等待原因状态机，为后续协程调度器铺路（对比原版 ucontext 方案：更轻量、跨平台）
