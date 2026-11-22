@@ -123,7 +123,7 @@ namespace pans
         ASSERT_RETVAL2(callback, nullptr, "condition timer callback must not be empty");
         return addTimer(interval, [condition = std::move(condition), callback = std::move(callback)]() mutable
                         {
-            if (condition.lock())
+            if (auto locked=condition.lock())
             {
                 callback();
             } }, recurring);
